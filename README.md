@@ -16,7 +16,7 @@ The program manages **three types of stake accounts** to handle the asynchronous
 
 2. **Reserve Stake Account** (PDA: `b"stake_reserve"`): Receiving incoming user deposits with the purpose of merging into main stake account.
 
-3. **Split Stake Accounts** (PDA: `b"split_account" + user_pubkey + nonce`): Per-user withdrawal accounts. Created when a user initiates withdrawal, immediately deactivated to start the cooldown period, and available for final withdrawal after ~2-3 epochs.
+3. **Split Stake Accounts** (PDA: `b"split_account" + user_pubkey + nonce`): Per-user withdrawal accounts. Created when a user initiates withdrawal.
 
 ### State Management
 
@@ -156,8 +156,6 @@ Both cranks are permissionless economic games. Users, bots, or altruistic partie
 ⚠️ **Test deployment only**. Do not use this program with real funds.
 
 ## Building and Testing
-
-For detailed build and test instructions, see [CLAUDE.md](CLAUDE.md).
 
 **Quick reference**:
 
