@@ -1,7 +1,6 @@
 use pinocchio::{
     account_info::AccountInfo,
-    instruction::{Seed, Signer},
-    msg,
+    instruction::Seed,
     program_error::ProgramError,
     pubkey::find_program_address,
     sysvars::{rent::Rent, Sysvar},
@@ -12,6 +11,7 @@ use pinocchio_token::{
 };
 
 use crate::{
+    errors::PinocchioError,
     instructions::helpers::{
         AccountCheck, ProgramAccount, SignerAccount, StakeAccountCreate, StakeAccountDeactivate,
         StakeAccountSplit, STAKE_PROGRAM_ID,
@@ -47,18 +47,15 @@ impl<'a> TryFrom<&'a [AccountInfo]> for CrankSplitAccounts<'a> {
         SignerAccount::check(withdrawer)?;
 
         if system_program.key() != &pinocchio_system::ID {
-            msg!("Invalid system program");
-            return Err(pinocchio::program_error::ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidSystemProgram.into());
         }
 
         if stake_program.key() != &STAKE_PROGRAM_ID {
-            msg!("Invalid stake program");
-            return Err(pinocchio::program_error::ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidStakeProgram.into());
         }
 
         if token_program.key() != &pinocchio_token::ID {
-            msg!("Invalid token program");
-            return Err(pinocchio::program_error::ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidTokenProgram.into());
         }
 
         Ok(Self {
@@ -99,7 +96,7 @@ impl TryFrom<&[u8]> for CrankSplitInstructionData {
         minimum_lamports += 1_000_000_000;
 
         if lamports_to_split < minimum_lamports {
-            return Err(ProgramError::InvalidInstructionData);
+            return Err(PinocchioError::SplitBelowMinimum.into());
         }
 
         Ok(Self {
@@ -109,6 +106,22 @@ impl TryFrom<&[u8]> for CrankSplitInstructionData {
     }
 }
 
+/// Splits stake from main account, deactivates it, and burns LST.
+///
+/// Accounts expected:
+///
+/// 0. `[WRITE]` Stake account main
+/// 1. `[WRITE]` Stake account reserve
+/// 2. `[WRITE, SIGNER]` Withdrawer
+/// 3. `[WRITE]` New stake account (split PDA)
+/// 4. `[WRITE]` Config PDA
+/// 5. `[WRITE]` Withdrawer ATA
+/// 6. `[WRITE]` LST mint
+/// 7. `[]` Rent sysvar
+/// 8. `[]` Clock sysvar
+/// 9. `[]` Token program
+/// 10. `[]` Stake program
+/// 11. `[]` System program
 pub struct CrankSplit<'a> {
     pub accounts: CrankSplitAccounts<'a>,
     pub data: CrankSplitInstructionData,
@@ -130,22 +143,22 @@ impl<'a> CrankSplit<'a> {
     pub fn process(&self) -> Result<(), ProgramError> {
         let (expected_config_pda, bump) = find_program_address(&[b"config"], &crate::ID);
         if *self.accounts.config_pda.key() != expected_config_pda {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidConfigPda.into());
         }
 
         let data = self.accounts.config_pda.try_borrow_data()?;
         let config = Config::load(&data)?;
 
         if config.stake_account_main != *self.accounts.stake_account_main.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountMain.into());
         }
 
         if config.stake_account_reserve != *self.accounts.stake_account_reserve.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountReserve.into());
         }
 
         if config.lst_mint != *self.accounts.lst_mint.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidLstMint.into());
         }
 
         let expected_ata = find_program_address(
@@ -158,8 +171,7 @@ impl<'a> CrankSplit<'a> {
         )
         .0;
         if expected_ata != *self.accounts.withdrawer_ata.key() {
-            msg!("Invalid depositor ATA");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidWithdrawerAta.into());
         }
 
         let bump_binding = [bump];
@@ -188,8 +200,7 @@ impl<'a> CrankSplit<'a> {
         );
 
         if expected_new_stake_account != *self.accounts.new_stake_account.key() {
-            msg!("Invalid new stake account PDA");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidSplitAccountPda.into());
         }
 
         let new_stake_account_bump_binding = [new_stake_account_bump];
@@ -246,7 +257,7 @@ impl<'a> CrankSplit<'a> {
         let withdrawer_ata_amount =
             TokenAccount::from_account_info(self.accounts.withdrawer_ata)?.amount();
         if withdrawer_ata_amount < lst_to_burn {
-            return Err(ProgramError::InsufficientFunds);
+            return Err(PinocchioError::InsufficientLstBalance.into());
         }
 
         drop(mint);
@@ -258,7 +269,6 @@ impl<'a> CrankSplit<'a> {
             amount: lst_to_burn,
         }
         .invoke()?;
-        msg!("5");
 
         Ok(())
     }

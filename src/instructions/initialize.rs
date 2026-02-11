@@ -8,6 +8,7 @@ use pinocchio::{
 use pinocchio_token::instructions::MintTo;
 
 use crate::{
+    errors::PinocchioError,
     instructions::helpers::{
         AccountCheck, AssociatedTokenAccount, AssociatedTokenAccountInit, MintAccount, MintInit,
         ProgramAccount, ProgramAccountInit, SignerAccount, StakeAccountCreate,
@@ -49,11 +50,11 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
         SignerAccount::check(lst_mint)?;
 
         if system_program.key() != &pinocchio_system::ID {
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidSystemProgram.into());
         }
 
         if token_program.key() != &pinocchio_token::ID {
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidTokenProgram.into());
         }
 
         SystemAccount::check(config_pda)?;
@@ -77,15 +78,15 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
         MintAccount::check(lst_mint)?;
 
         if !validator_vote_account.is_owned_by(&VOTE_PROGRAM_ID) {
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidValidatorVoteAccount.into());
         }
 
         if stake_program.key() != &STAKE_PROGRAM_ID {
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidStakeProgram.into());
         }
 
         if associated_token_program.key() != &pinocchio_associated_token_account::ID {
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidAssociatedTokenProgram.into());
         }
 
         Ok(Self {
@@ -107,7 +108,25 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
         })
     }
 }
-
+/// Sets up liquid staking pool and mints initial LST.
+///
+/// Accounts expected:
+///
+/// 0. `[WRITE, SIGNER]` Initializer
+/// 1. `[WRITE]` Initializer ATA
+/// 2. `[WRITE]` Config PDA
+/// 3. `[WRITE]` Stake account main
+/// 4. `[WRITE]` Stake account reserve
+/// 5. `[WRITE, SIGNER]` LST mint
+/// 6. `[WRITE]` Validator vote account
+/// 7. `[WRITE]` Unused account
+/// 8. `[]` System program
+/// 9. `[]` Stake program
+/// 10. `[]` Token program
+/// 11. `[]` Associated token program
+/// 12. `[]` Rent sysvar
+/// 13. `[]` Clock sysvar
+/// 14. `[]` History sysvar
 pub struct Initialize<'a> {
     pub accounts: InitializeAccounts<'a>,
 }
@@ -127,7 +146,7 @@ impl<'a> Initialize<'a> {
     pub fn process(&mut self) -> Result<(), ProgramError> {
         let (expected_config_pda, bump) = find_program_address(&[b"config"], &crate::ID);
         if expected_config_pda != *self.accounts.config_pda.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidConfigPda.into());
         }
         let bump_binding = [bump];
         let config_seeds = &[Seed::from(b"config"), Seed::from(&bump_binding)];
@@ -153,7 +172,7 @@ impl<'a> Initialize<'a> {
             find_program_address(&[b"stake_main"], &crate::ID);
 
         if expected_stake_account_main != *self.accounts.stake_account_main.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountMain.into());
         }
 
         let stake_main_bump_binding = [stake_main_bump];
@@ -192,7 +211,7 @@ impl<'a> Initialize<'a> {
             find_program_address(&[b"stake_reserve"], &crate::ID);
 
         if expected_stake_account_reserve != *self.accounts.stake_account_reserve.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountReserve.into());
         }
 
         let stake_reserve_bump_binding = [stake_reserve_bump];

@@ -1,9 +1,10 @@
 use pinocchio::{
-    account_info::AccountInfo, instruction::Seed, msg, program_error::ProgramError,
+    account_info::AccountInfo, instruction::Seed, program_error::ProgramError,
     pubkey::find_program_address,
 };
 
 use crate::{
+    errors::PinocchioError,
     instructions::helpers::{ProgramAccount, StakeAccountMerge, STAKE_PROGRAM_ID},
     state::Config,
 };
@@ -29,13 +30,11 @@ impl<'a> TryFrom<&'a [AccountInfo]> for CrankMergeReserveAccounts<'a> {
         };
 
         if system_program.key() != &pinocchio_system::ID {
-            msg!("Invalid system program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidSystemProgram.into());
         }
 
         if stake_program.key() != &STAKE_PROGRAM_ID {
-            msg!("Invalid stake program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidStakeProgram.into());
         }
 
         Ok(Self {
@@ -50,6 +49,17 @@ impl<'a> TryFrom<&'a [AccountInfo]> for CrankMergeReserveAccounts<'a> {
     }
 }
 
+/// Merges reserve stake account into main stake account.
+///
+/// Accounts expected:
+///
+/// 0. `[WRITE]` Config PDA
+/// 1. `[WRITE]` Stake account main
+/// 2. `[WRITE]` Stake account reserve
+/// 3. `[]` Clock sysvar
+/// 4. `[]` History sysvar
+/// 5. `[]` System program
+/// 6. `[]` Stake program
 pub struct CrankMergeReserve<'a> {
     pub accounts: CrankMergeReserveAccounts<'a>,
 }
@@ -69,7 +79,7 @@ impl<'a> CrankMergeReserve<'a> {
         let reserve_data = self.accounts.stake_account_reserve.try_borrow_data()?;
         let stake_state = u32::from_le_bytes(reserve_data[0..4].try_into().unwrap());
         if stake_state != 2 {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::ReserveNotStaked.into());
         }
         drop(reserve_data);
 
@@ -78,18 +88,18 @@ impl<'a> CrankMergeReserve<'a> {
         let config_seeds = &[Seed::from(b"config"), Seed::from(&bump_binding)];
 
         if expected_config_pda != *self.accounts.config_pda.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidConfigPda.into());
         }
 
         let config_data = self.accounts.config_pda.try_borrow_data()?;
         let config = Config::load(&config_data)?;
 
         if config.stake_account_main != *self.accounts.stake_account_main.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountMain.into());
         }
 
         if config.stake_account_reserve != *self.accounts.stake_account_reserve.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountReserve.into());
         }
 
         ProgramAccount::merge_stake_account(

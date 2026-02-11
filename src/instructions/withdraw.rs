@@ -1,13 +1,13 @@
 use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Seed,
-    msg,
-    program_error::ProgramError,
+    account_info::AccountInfo, instruction::Seed, program_error::ProgramError,
     pubkey::find_program_address,
 };
 
-use crate::instructions::helpers::{
-    AccountCheck, ProgramAccount, SignerAccount, StakeAccountWithdraw, STAKE_PROGRAM_ID,
+use crate::{
+    errors::PinocchioError,
+    instructions::helpers::{
+        AccountCheck, ProgramAccount, SignerAccount, StakeAccountWithdraw, STAKE_PROGRAM_ID,
+    },
 };
 
 pub struct WithdrawAccounts<'a> {
@@ -32,8 +32,7 @@ impl<'a> TryFrom<&'a [AccountInfo]> for WithdrawAccounts<'a> {
         SignerAccount::check(withdrawer)?;
 
         if stake_program.key() != &STAKE_PROGRAM_ID {
-            msg!("Invalid stake program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidStakeProgram.into());
         }
 
         Ok(Self {
@@ -65,6 +64,16 @@ impl TryFrom<&[u8]> for WithdrawInstructionData {
     }
 }
 
+/// Withdraws SOL from deactivated split stake account to user.
+///
+/// Accounts expected:
+///
+/// 0. `[WRITE]` Account to withdraw from (split PDA)
+/// 1. `[WRITE, SIGNER]` Withdrawer
+/// 2. `[]` Clock sysvar
+/// 3. `[]` History sysvar
+/// 4. `[WRITE]` Config PDA
+/// 5. `[]` Stake program
 pub struct Withdraw<'a> {
     pub accounts: WithdrawAccounts<'a>,
     pub data: WithdrawInstructionData,
@@ -87,8 +96,7 @@ impl<'a> Withdraw<'a> {
     pub fn process(&self) -> Result<(), ProgramError> {
         let (expected_config_pda, bump) = find_program_address(&[b"config"], &crate::ID);
         if *self.accounts.config_pda.key() != expected_config_pda {
-            msg!("Invalid config PDA");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidConfigPda.into());
         }
 
         let nonce_bytes = self.data.nonce.to_le_bytes();
@@ -103,8 +111,7 @@ impl<'a> Withdraw<'a> {
         .0;
 
         if *self.accounts.account_to_withdraw_from.key() != expected_split_account {
-            msg!("Invalid split account PDA");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidSplitAccountPda.into());
         }
 
         let bump_binding = [bump];

@@ -1,7 +1,6 @@
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{Seed, Signer},
-    msg,
     program_error::ProgramError,
     pubkey::find_program_address,
 };
@@ -9,6 +8,7 @@ use pinocchio_system::instructions::Transfer;
 use pinocchio_token::{instructions::MintTo, state::Mint};
 
 use crate::{
+    errors::PinocchioError,
     instructions::helpers::{LAMPORTS_PER_SOL, STAKE_PROGRAM_ID},
     state::Config,
 };
@@ -37,22 +37,19 @@ impl<'a> TryFrom<&'a [AccountInfo]> for DepositAccounts<'a> {
         };
 
         if !depositor.is_signer() {
-            return Err(ProgramError::MissingRequiredSignature);
+            return Err(PinocchioError::NotSigner.into());
         }
 
         if system_program.key() != &pinocchio_system::ID {
-            msg!("Invalid system program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidSystemProgram.into());
         }
 
         if token_program.key() != &pinocchio_token::ID {
-            msg!("Invalid token program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidTokenProgram.into());
         }
 
         if stake_program.key() != &STAKE_PROGRAM_ID {
-            msg!("Invalid stake program");
-            return Err(ProgramError::IncorrectProgramId);
+            return Err(PinocchioError::InvalidStakeProgram.into());
         }
 
         Ok(Self {
@@ -79,20 +76,33 @@ impl TryFrom<&[u8]> for DepositData {
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         if data.len() != 8 {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         let amount_in_lamports = u64::from_le_bytes(data[0..8].try_into().unwrap());
 
         if amount_in_lamports < LAMPORTS_PER_SOL {
-            msg!("Deposit amount must be at least 1 SOL");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::DepositBelowMinimum.into());
         }
 
         Ok(Self { amount_in_lamports })
     }
 }
 
+/// Deposits SOL to reserve and mints LST tokens.
+///
+/// Accounts expected:
+///
+/// 0. `[WRITE]` Config PDA
+/// 1. `[WRITE, SIGNER]` Depositor
+/// 2. `[WRITE]` Depositor ATA
+/// 3. `[WRITE]` LST mint
+/// 4. `[WRITE]` Stake account main
+/// 5. `[WRITE]` Stake account reserve
+/// 6. `[]` Stake program
+/// 7. `[]` Token program
+/// 8. `[]` System program
+/// 9. `[]` Rent sysvar
 pub struct Deposit<'a> {
     pub accounts: DepositAccounts<'a>,
     pub data: DepositData,
@@ -115,7 +125,7 @@ impl<'a> Deposit<'a> {
     pub fn process(&self) -> Result<(), ProgramError> {
         let (expected_config_pda, bump) = find_program_address(&[b"config"], &crate::ID);
         if expected_config_pda != *self.accounts.config_pda.key() {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidConfigPda.into());
         }
 
         let bump_binding = [bump];
@@ -124,13 +134,11 @@ impl<'a> Deposit<'a> {
         let config = Config::load(&data)?;
 
         if !(*self.accounts.stake_account_reserve.key() == config.stake_account_reserve) {
-            msg!("Invalid stake account reserve");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidStakeAccountReserve.into());
         }
 
         if !(*self.accounts.lst_mint.key() == config.lst_mint) {
-            msg!("Invalid LST mint");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidLstMint.into());
         }
 
         let expected_ata = find_program_address(
@@ -143,8 +151,7 @@ impl<'a> Deposit<'a> {
         )
         .0;
         if expected_ata != *self.accounts.depositor_ata.key() {
-            msg!("Invalid depositor ATA");
-            return Err(ProgramError::InvalidAccountData);
+            return Err(PinocchioError::InvalidDepositorAta.into());
         }
 
         let mint = Mint::from_account_info(self.accounts.lst_mint)?;
