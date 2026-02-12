@@ -77,6 +77,7 @@ Where `total_lamports_managed = main + reserve + new_split_account` lamports.
 
 - **Single validator model**: Program delegates to one validator specified at initialization.
 - **Validator liveness**: Assumes validator remains operational. No fallback mechanism, no validator health checks.
+- **Single token**: Assumes a single liquid staking token for the whole contract.
 
 ### User Assumptions
 
